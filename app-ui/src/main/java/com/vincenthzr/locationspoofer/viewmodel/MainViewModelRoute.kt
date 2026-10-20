@@ -350,6 +350,13 @@ private fun MainViewModel.startSimulationWithPoints(pointsToRun: List<RoutePoint
             _uiState.update { it.copy(collectedWifiJson = wifi, collectedCellJson = cell, collectedBluetoothJson = bluetooth) }
 
             val current = _uiState.value
+            val preset = MotionController.SpeedPreset(current.routeSimMode.name, joystickMaxSpeedMs().toDouble())
+            // 先让运动控制器开始推进，界面上的位置立刻动起来；配置发布（可能因路线较大而变慢）
+            // 在后台完成后再由 Xposed 端按同一个 startTimestamp 追到相同位置。
+            motionController.onRouteStarted(pointsToRun, preset, current.stopAtDestination, now, startPaused = !isLoop)
+            // 悬浮摇杆只在手动模式下出现；停止模拟后它会随 MotionController 结束会话自行关闭
+            if (!isLoop) locationRepository.setFloatingJoystickVisible(context, true)
+
             locationRepository.startSpoofing(
                 context,
                 startPoint.lat,
@@ -373,12 +380,6 @@ private fun MainViewModel.startSimulationWithPoints(pointsToRun: List<RoutePoint
                 stepCadenceSpm = current.stepCadenceSpm,
                 isAutoCadence = current.isAutoCadence
             )
-
-            val preset = MotionController.SpeedPreset(current.routeSimMode.name, joystickMaxSpeedMs().toDouble())
-            // 手动模式同样加载路线，只是以暂停状态开始、由悬浮摇杆控制，点"开始"后沿路线前进
-            motionController.onRouteStarted(pointsToRun, preset, current.stopAtDestination, now, startPaused = !isLoop)
-            // 悬浮摇杆只在手动模式下出现；停止模拟后它会随 MotionController 结束会话自行关闭
-            if (!isLoop) locationRepository.setFloatingJoystickVisible(context, true)
 
             // 目标 App 已经在运行且未重新加载模块时，配置推送不一定会被旧进程接收。
             // 和定点模拟保持一致：按用户设置重启已勾选的作用域应用。
