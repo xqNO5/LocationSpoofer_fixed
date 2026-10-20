@@ -88,22 +88,9 @@ internal fun MainViewModel.startSpoofing() {
  */
 
 internal suspend fun MainViewModel.restartHookedAppsSilently() {
-    if (!BuildConfig.GLOBAL_SCHEME) {
-        // 非全局方案：重启 LSPosed 作用域里勾选的全部 App（包括承担融合定位的 GMS）
-        val apps = lsposedManager.getHookedApps(context)
-        if (apps.isNotEmpty()) {
-            locationRepository.checkRootAccess() // 确认 Root 授权，以便强制停止目标应用
-            locationRepository.forceStopApps(apps.map { it.packageName })
-        }
-        return
-    }
-    val targetPackages = mutableSetOf<String>()
-    // 1. LSPosed 传统作用域勾选的应用
-    targetPackages.addAll(lsposedManager.getHookedApps(context).map { it.packageName })
-    // 2. 系统级 Hook 目标应用包名列表
-    targetPackages.addAll(settingsRepository.getSystemHookPackages())
-
-    // 严格排除系统核心组件、电话服务、SystemUI 与自身，避免误杀核心服务或导致自身退出
+    // 绝不能把本应用自己、SystemUI、电话/蓝牙等系统核心进程放进强停列表：
+    // 否则开始模拟后 App 自己会被杀，重启后 initialization 把 routePlanStage 重置为 IDLE，
+    // 表现为"刚开始就退回选点"或"标记出现但不移动"。
     val exempt = setOf(
         context.packageName,
         "android",
@@ -112,11 +99,23 @@ internal suspend fun MainViewModel.restartHookedAppsSilently() {
         "com.android.systemui",
         "com.android.phone",
         "com.android.bluetooth",
-        "com.android.server.telecom",
-        "com.xiaomi.metoknlp",
-        "com.google.android.gms"
+        "com.android.server.telecom"
     )
-    val toKill = targetPackages.filter { it.isNotBlank() && !exempt.contains(it) }
+    val targetPackages = mutableSetOf<String>()
+
+    if (!BuildConfig.GLOBAL_SCHEME) {
+        // 非全局方案：重启 LSPosed 作用域里勾选的全部 App（包括承担融合定位的 GMS）
+        targetPackages.addAll(lsposedManager.getHookedApps(context).map { it.packageName })
+    } else {
+        // 1. LSPosed 传统作用域勾选的应用
+        targetPackages.addAll(lsposedManager.getHookedApps(context).map { it.packageName })
+        // 2. 系统级 Hook 目标应用包名列表
+        targetPackages.addAll(settingsRepository.getSystemHookPackages())
+        // GMS 由系统融合定位托管，强停会导致整机定位恢复变慢
+        targetPackages.remove("com.google.android.gms")
+    }
+
+    val toKill = targetPackages.filter { it.isNotBlank() && it !in exempt }
     if (toKill.isNotEmpty()) {
         locationRepository.checkRootAccess() // 确认 Root 授权，以便强制停止目标应用
         locationRepository.forceStopApps(toKill)
