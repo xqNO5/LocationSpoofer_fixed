@@ -10,7 +10,7 @@ import java.util.Locale
  * 版本号参与哈希，将来匹配算法或数据格式变化时可以整体失效旧缓存。
  */
 object RouteGeometryCacheKey {
-    private const val VERSION = "route-cache-v1"
+    private const val VERSION = "route-cache-v2"
 
     fun of(waypoints: List<RoutePoint>, profile: String): String {
         val canonical = buildString {

@@ -252,7 +252,7 @@ private fun MainViewModel.fetchRealRouteAndStart(points: List<RoutePoint>, state
             if (cached != null) {
                 withContext(Dispatchers.Main) {
                     _uiState.update { it.copy(isFetchingRoute = false) }
-                    startSimulationWithPoints(smoothRealRouteTurns(cached), state)
+                    startSimulationWithPoints(realRouteForPlayback(cached), state)
                     android.widget.Toast.makeText(
                         context,
                         context.getString(R.string.real_route_cache_hit),
@@ -271,7 +271,7 @@ private fun MainViewModel.fetchRealRouteAndStart(points: List<RoutePoint>, state
 
             withContext(Dispatchers.Main) {
                 _uiState.update { it.copy(isFetchingRoute = false) }
-                startSimulationWithPoints(smoothRealRouteTurns(realPoints), state)
+                startSimulationWithPoints(realRouteForPlayback(realPoints), state)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -295,15 +295,15 @@ private fun MainViewModel.fetchRealRouteAndStart(points: List<RoutePoint>, state
     }
 }
 
-/** 真实道路只修圆急转弯，直线段保持高德原样；缓存仍保存未平滑的原始折线。 */
-private fun MainViewModel.smoothRealRouteTurns(points: List<RoutePoint>): List<RoutePoint> {
+/** 真实道路播放前的唯一入口：无论新请求还是缓存命中，都走同一套急转弯平滑。 */
+private fun MainViewModel.realRouteForPlayback(points: List<RoutePoint>): List<RoutePoint> {
     if (points.size < 3) return points
     val smoothed = RouteTurnSmoother.smooth(points.map { LatLng(it.lat, it.lng) })
     if (smoothed.size < 2) return points
     return smoothed.map { RoutePoint(it.lat, it.lng) }
 }
 
-/** 非真实道路匹配时，把折线路点整体展开成平滑曲线；真实道路走 [smoothRealRouteTurns]，只修急转弯。 */
+/** 非真实道路匹配时，把折线路点整体展开成平滑曲线；真实道路走 [realRouteForPlayback]，只修急转弯。 */
 private fun MainViewModel.smoothRoutePoints(points: List<RoutePoint>): List<RoutePoint> {
     if (points.size < 2) return points
     val smoothed = RouteSmoother.smooth(points.map { LatLng(it.lat, it.lng) })
