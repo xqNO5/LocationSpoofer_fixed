@@ -27,7 +27,9 @@ class AdaptationProgressTest {
     fun `finds the global status of each system family`() {
         val hyperOs = AdaptationProgress.findGlobalSystem(doc, RomFamily.HYPEROS_MIUI.progressKeywords)!!
         assertEquals(AdaptationProgress.Status.VERIFIED, hyperOs.status)
-        assertEquals("HyperOS 4", hyperOs.verifiedVersions)
+        // 进度文档会并列记录多个已复验的系统版本（如 "HyperOS 4、HyperOS 3"），
+        // 这里只要求首个版本仍是 HyperOS 4，避免文档补充机型后测试无故失败。
+        assertTrue(hyperOs.verifiedVersions.startsWith("HyperOS 4"))
 
         val colorOs = AdaptationProgress.findGlobalSystem(doc, RomFamily.COLOROS.progressKeywords)!!
         assertEquals(AdaptationProgress.Status.PARTIAL, colorOs.status)
