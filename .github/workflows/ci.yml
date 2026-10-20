@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -24,14 +28,17 @@ jobs:
           cache: gradle
 
       - name: Unit Tests
+        timeout-minutes: 15
         run: |
           chmod +x ./gradlew
           ./gradlew --no-daemon :core-geo:test :core-data:testScopedDebugUnitTest :app-ui:testScopedDebugUnitTest
 
       - name: Assemble Scoped Debug
+        timeout-minutes: 25
         run: ./gradlew --no-daemon :app:assembleScopedDebug
 
       - name: Assemble Global Debug
+        timeout-minutes: 25
         run: ./gradlew --no-daemon :app:assembleGlobalDebug
 
       - name: Upload APKs
