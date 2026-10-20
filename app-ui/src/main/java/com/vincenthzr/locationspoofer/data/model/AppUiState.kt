@@ -38,6 +38,14 @@ enum class RoutePlanStage {
     RUNNING
 }
 
+/** 当前路线点来自哪里：决定地图叠加层与周边环境数据是否沿用某条采集路线。 */
+enum class RouteSource {
+    NONE,
+    MANUAL,
+    SAVED,
+    COLLECTION
+}
+
 /** 路线运行模式 */
 enum class RouteRunMode {
     /** 手动模式：摇杆控制移动方向和速度 */
@@ -99,7 +107,11 @@ data class AppState(
     val simBearing: Float = 0f,
     val savedRoutes: List<SavedRoute> = emptyList(),
     // 路线规划
+    /** 用户点选/路线库加载的控制路点；运行中不会被真实道路折线覆盖，便于保存与重选。 */
     val routePoints: List<RoutePoint> = emptyList(),
+    /** 正在播放的实际路径：真实道路折线，或经过平滑处理的控制路点。 */
+    val activeRoutePoints: List<RoutePoint> = emptyList(),
+    val routeSource: RouteSource = RouteSource.NONE,
     val routePlanStage: RoutePlanStage = RoutePlanStage.IDLE,
     /** 路线运行模式（手动 / 循环） */
     val routeRunMode: RouteRunMode = RouteRunMode.LOOP,
@@ -115,6 +127,8 @@ data class AppState(
     val isAutoCadence: Boolean = true,
     /** 是否使用真实路线规划 */
     val useRealRoute: Boolean = false,
+    /** 真实道路匹配使用的路网类型 */
+    val realRouteMode: RealRouteMode = RealRouteMode.AUTO,
     /** 到达终点后是否停下 */
     val stopAtDestination: Boolean = false,
     /** 是否正在向地图API请求真实路线 */

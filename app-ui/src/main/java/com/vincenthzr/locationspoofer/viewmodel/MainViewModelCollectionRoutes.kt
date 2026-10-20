@@ -74,6 +74,8 @@ internal fun MainViewModel.selectCollectedRoute(id: Long) {
         it.copy(selectedCollectionRouteId = id, pinnedCollectedLocationId = null, pinnedLocationName = null,
             latitudeInput = point.lat.toString(), longitudeInput = point.lng.toString(),
             routePoints = route.route.geometry().map { p -> RoutePoint(p.lat, p.lng) },
+            activeRoutePoints = emptyList(),
+            routeSource = com.vincenthzr.locationspoofer.data.model.RouteSource.COLLECTION,
             routePlanStage = com.vincenthzr.locationspoofer.data.model.RoutePlanStage.READY,
             useRealRoute = false)
     }
@@ -82,14 +84,26 @@ internal fun MainViewModel.selectCollectedRoute(id: Long) {
 
 internal fun MainViewModel.deleteCollectedRoute(id: Long) {
     viewModelScope.launch(Dispatchers.IO) { environmentDao.deleteCollectionRoute(id) }
-    _uiState.update { if (it.selectedCollectionRouteId == id) it.copy(selectedCollectionRouteId = null) else it }
+    _uiState.update {
+        if (it.selectedCollectionRouteId != id) it
+        else it.copy(
+            selectedCollectionRouteId = null,
+            activeRoutePoints = emptyList(),
+            routeSource = if (it.routeSource == com.vincenthzr.locationspoofer.data.model.RouteSource.COLLECTION) {
+                com.vincenthzr.locationspoofer.data.model.RouteSource.NONE
+            } else it.routeSource
+        )
+    }
 }
 
 /** 界面能力判断与模拟移动使用同一匹配规则，避免路线中部采样稀疏时丢失环境数据。 */
 internal suspend fun MainViewModel.environmentRecordsAt(lat: Double, lng: Double): List<CompleteLocation> {
     val position = LatLng(lat, lng)
     val routes = collectionRoutes.value
+    // 只有当前路线确实来自采集路线库时才启用"偏好路线"匹配。
+    // 否则手动规划/路线库载入后仍可能被旧采集路线抢走环境数据。
     val selected = _uiState.value.selectedCollectionRouteId
+        .takeIf { _uiState.value.routeSource == com.vincenthzr.locationspoofer.data.model.RouteSource.COLLECTION }
     val route = CollectionRouteMatcher.routeAt(routes, position, selected)
     if (route != null) return CollectionRouteMatcher.samplesAt(route, position)
     return environmentLocations.value

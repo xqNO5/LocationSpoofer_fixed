@@ -365,6 +365,14 @@
     <string name="stop_at_destination_desc_off">到达终点后自动循环巡航（闭环正向，开放折返）</string>
     <string name="real_road_matching">真实道路匹配</string>
     <string name="real_road_matching_desc">自动计算并贴合城市真实行车道路</string>
+    <string name="real_route_mode_title">路网类型</string>
+    <string name="real_route_mode_auto">自动</string>
+    <string name="real_route_mode_walking">步行</string>
+    <string name="real_route_mode_driving">驾车</string>
+    <string name="real_route_mode_auto_desc">自动：步行/跑步用步行路网，骑行/驾车用驾车路网</string>
+    <string name="real_route_mode_walking_desc">步行路网：更容易进入小区、校园等内部道路；不支持途经点，长距离可能失败</string>
+    <string name="real_route_mode_driving_desc">驾车路网：单次最多 6 个途经点，超出自动分批请求</string>
+    <string name="real_route_cache_hit">已使用本地缓存的道路路线</string>
     <string name="start_route_simulation">开始路线模拟</string>
     <string name="software_update">软件更新</string>
     <string name="software_update_desc">检查并获取最新发布版本与功能改进</string>
@@ -487,10 +495,10 @@
     <string name="opencellid_import">OpenCellID 导入</string>
     <string name="contains_records_format">包含 %d 条记录</string>
     <string name="lat_lng_format_prefix">经纬度:</string>
-    <string name="route_plan_failed_fallback_straight">路线规划失败或部分失败，使用直线模拟</string>
+    <string name="route_plan_failed_fallback_straight">真实道路规划失败，将改用平滑模拟路线</string>
     <string name="route_request_exception">路线请求异常: %s</string>
     <string name="amap_api_exception_format">高德API异常(码:%1$d): %2$s</string>
-    <string name="amap_quota_exhausted_fallback_format">高德API调用失败(可能是额度耗尽)，将退回直线模拟！
+    <string name="amap_quota_exhausted_fallback_format">高德API调用失败(可能是额度耗尽)，将退回平滑模拟路线！
 错误详情: %s</string>
     <string name="open_battery_opt_failed">打开电池优化页面失败: %s</string>
     <string name="open_app_info_failed">打开应用信息失败: %s</string>

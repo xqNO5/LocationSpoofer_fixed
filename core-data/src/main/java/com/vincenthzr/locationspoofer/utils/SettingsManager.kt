@@ -71,6 +71,11 @@ class SettingsManager(context: Context) {
         get() = prefs.getString("map_engine", "AUTO") ?: "AUTO"
         set(value) = prefs.edit().putString("map_engine", value).apply()
 
+    /** 真实道路匹配使用的路网：AUTO / WALKING / DRIVING */
+    var realRouteMode: String
+        get() = prefs.getString("real_route_mode", "AUTO") ?: "AUTO"
+        set(value) = prefs.edit().putString("real_route_mode", value).apply()
+
     var rootSolution: String
         get() = prefs.getString("root_solution", "AUTO") ?: "AUTO"
         set(value) = prefs.edit().putString("root_solution", value).apply()

@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - 'fix/**'
+      - 'feature/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Unit Tests
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :core-geo:test :core-data:testScopedDebugUnitTest :app-ui:testScopedDebugUnitTest
+
+      - name: Assemble Scoped Debug
+        run: ./gradlew --no-daemon :app:assembleScopedDebug
+
+      - name: Assemble Global Debug
+        run: ./gradlew --no-daemon :app:assembleGlobalDebug
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apks
+          if-no-files-found: error
+          path: |
+            app/build/outputs/apk/scoped/debug/*.apk
+            app/build/outputs/apk/global/debug/*.apk

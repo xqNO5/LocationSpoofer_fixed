@@ -29,7 +29,8 @@ val coreDataModule = module {
     single { OpenCellIdClient() }
     single { WifiRepository(get()) }
 
-    single { LocationRepository(get(), get(), get(), get(), get(), get()) }
+    single { get<AppDatabase>().routeGeometryCacheDao() }
+    single { LocationRepository(get(), get(), get(), get(), get(), get(), get()) }
     single { SettingsRepository(get()) }
     single { HookStatusRepository(get()) }
     single {

@@ -25,6 +25,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.vincenthzr.locationspoofer.ui.R
 import com.vincenthzr.locationspoofer.data.model.AppState
+import com.vincenthzr.locationspoofer.data.model.RealRouteMode
 import com.vincenthzr.locationspoofer.data.model.RouteRunMode
 import com.vincenthzr.locationspoofer.data.model.SimMode
 import com.vincenthzr.locationspoofer.ui.screen.AltitudeSettingsCard
@@ -40,6 +41,7 @@ fun RouteConfigDialog(
     onSpeedChange: (SimMode) -> Unit,
     onCustomSpeedChange: (Double) -> Unit = {},
     onUseRealRouteChange: (Boolean) -> Unit = {},
+    onRealRouteModeChange: (RealRouteMode) -> Unit = {},
     onStopAtDestinationChange: (Boolean) -> Unit = {},
     onEnableStepSimulationChange: (Boolean) -> Unit = {},
     onStepCadenceChange: (Int) -> Unit = {},
@@ -545,6 +547,55 @@ fun RouteConfigDialog(
                         }
                     }
 
+
+                    // 真实道路匹配的路网类型：步行/驾车/自动。
+                    // 步行的优势是能穿小区、校园内部路；但它不支持途经点，长距离也可能失败，
+                    // 所以保留"自动"给普通用户，把选择权留给需要针对内部路调试的人。
+                    if (uiState.useRealRoute) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                stringResource(R.string.real_route_mode_title),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                RealRouteMode.entries.forEach { mode ->
+                                    FilterChip(
+                                        selected = uiState.realRouteMode == mode,
+                                        onClick = { onRealRouteModeChange(mode) },
+                                        label = {
+                                            Text(
+                                                stringResource(
+                                                    when (mode) {
+                                                        RealRouteMode.AUTO -> R.string.real_route_mode_auto
+                                                        RealRouteMode.WALKING -> R.string.real_route_mode_walking
+                                                        RealRouteMode.DRIVING -> R.string.real_route_mode_driving
+                                                    }
+                                                ),
+                                                fontSize = 12.sp
+                                            )
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                            Text(
+                                stringResource(
+                                    when (uiState.realRouteMode) {
+                                        RealRouteMode.AUTO -> R.string.real_route_mode_auto_desc
+                                        RealRouteMode.WALKING -> R.string.real_route_mode_walking_desc
+                                        RealRouteMode.DRIVING -> R.string.real_route_mode_driving_desc
+                                    }
+                                ),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                            )
+                        }
+                    }
 
                     // 环境模拟（Wi-Fi / 基站 / 蓝牙 / 抖动 / 卫星数）
                     // 这些参数路线模拟本来就已经传给底层了，只是之前没有入口，

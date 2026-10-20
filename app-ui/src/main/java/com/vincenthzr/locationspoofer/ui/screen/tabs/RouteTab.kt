@@ -72,6 +72,7 @@ import com.vincenthzr.locationspoofer.viewmodel.setIsAutoCadence
 import com.vincenthzr.locationspoofer.viewmodel.setMapEngine
 import com.vincenthzr.locationspoofer.viewmodel.setMapType
 import com.vincenthzr.locationspoofer.viewmodel.setRouteRunMode
+import com.vincenthzr.locationspoofer.viewmodel.setRealRouteMode
 import com.vincenthzr.locationspoofer.viewmodel.setRouteSimMode
 import com.vincenthzr.locationspoofer.viewmodel.setSatelliteCount
 import com.vincenthzr.locationspoofer.viewmodel.setSearchMode
@@ -175,31 +176,58 @@ fun RouteTab(
 
     val manageDataList = manageDataViewModel.uiState.collectAsState().value.dataList
     var liveMarker by remember { mutableStateOf<AppMapMarker?>(null) }
-    LaunchedEffect(routePoints, mapController, manageDataList, isActive, collectionRoutes, uiState.selectedCollectionRouteId) {
+
+    // 地图上真正要画的线：运行时用实际播放路径（真实道路或平滑后路径），
+    // 选点/预览时把控制点展开成平滑曲线。真实道路匹配成功时不再二次平滑。
+    val routePathPoints = remember(routePoints, uiState.activeRoutePoints, stage, uiState.useRealRoute, uiState.routeSource) {
+        when {
+            stage == RoutePlanStage.RUNNING && uiState.activeRoutePoints.size >= 2 -> uiState.activeRoutePoints
+            routePoints.size < 2 -> emptyList()
+            uiState.useRealRoute -> routePoints
+            else -> {
+                val smoothed = com.vincenthzr.locationspoofer.utils.RouteSmoother.smooth(
+                    routePoints.map { com.vincenthzr.locationspoofer.utils.CoordinateUtils.LatLng(it.lat, it.lng) }
+                )
+                if (smoothed.size < 2) routePoints
+                else smoothed.map { RoutePoint(it.lat, it.lng) }
+            }
+        }
+    }
+    val activeCollectionRoute = remember(collectionRoutes, uiState.selectedCollectionRouteId, uiState.routeSource) {
+        if (uiState.routeSource == RouteSource.COLLECTION) {
+            collectionRoutes.firstOrNull { it.route.id == uiState.selectedCollectionRouteId }
+        } else null
+    }
+
+    LaunchedEffect(routePathPoints, mapController, manageDataList, isActive, activeCollectionRoute?.route?.id) {
         if (!isActive) return@LaunchedEffect
         val map = mapController ?: return@LaunchedEffect
         map.clear()
-        collectionRoutes.firstOrNull { it.route.id == uiState.selectedCollectionRouteId }?.let {
+        activeCollectionRoute?.let {
             com.vincenthzr.locationspoofer.ui.components.CollectionRouteMapHelper.draw(map, it.route)
         }
         liveMarker = null
         val locations = manageDataList.map { it.location }
         MapCoverageHelper.drawCoverage(map, locations)
 
-        if (routePoints.size >= 2) {
+        if (routePathPoints.size >= 2) {
             map.addPolyline(
-                routePoints.map { Pair(it.lat, it.lng) },
+                routePathPoints.map { Pair(it.lat, it.lng) },
                 android.graphics.Color.parseColor("#FF388BFD"),
                 8f
             )
         }
+
+        // 控制点用于起点/终点/编号标记；真实道路折线可能有上千个点，
+        // 不能把每个采样点都画成 Marker，否则会卡死地图。控制点过多时只标起终点。
+        val showIntermediateMarkers = routePoints.size <= 50
         routePoints.forEachIndexed { idx, p ->
             val type = when {
                 idx == 0 -> MarkerType.GREEN
                 idx == routePoints.lastIndex && routePoints.size > 1 -> MarkerType.RED
                 else -> MarkerType.DEFAULT
             }
-            if (uiState.useRealRoute && uiState.routePlanStage == RoutePlanStage.RUNNING && type == MarkerType.DEFAULT) {
+            if (type == MarkerType.DEFAULT && !showIntermediateMarkers) {
                 return@forEachIndexed
             }
             val startBadge = context.getString(R.string.route_start_badge)
@@ -209,12 +237,7 @@ fun RouteTab(
                 MarkerType.RED -> endBadge
                 else -> "${idx + 1}"
             }
-            map.addMarker(
-                p.lat,
-                p.lng,
-                if (type == MarkerType.RED && uiState.useRealRoute && uiState.routePlanStage == RoutePlanStage.RUNNING) endBadge else label,
-                type
-            )
+            map.addMarker(p.lat, p.lng, label, type)
         }
 
         if (uiState.isSpoofingActive) {
@@ -249,10 +272,10 @@ fun RouteTab(
         }
     }
 
-    LaunchedEffect(uiState.routePlanStage, routePoints, isActive, mapController, uiState.selectedCollectionRouteId) {
+    LaunchedEffect(uiState.routePlanStage, routePathPoints, isActive, mapController) {
         if (!isActive) return@LaunchedEffect
         if ((uiState.routePlanStage == RoutePlanStage.RUNNING ||
-                (uiState.routePlanStage == RoutePlanStage.READY && uiState.selectedCollectionRouteId != null)) && routePoints.size >= 2) {
+                uiState.routePlanStage == RoutePlanStage.READY) && routePathPoints.size >= 2) {
             val padLeft = with(density) { 36.dp.roundToPx() }
             val padTop = with(density) { 80.dp.roundToPx() }
             val padRight = with(density) { 36.dp.roundToPx() }
@@ -261,7 +284,7 @@ fun RouteTab(
             val padBottom =
                 with(density) { effectiveBottomDp.roundToPx() }
             mapController?.fitBounds(
-                points = routePoints.map { Pair(it.lat, it.lng) },
+                points = routePathPoints.map { Pair(it.lat, it.lng) },
                 paddingLeft = padLeft,
                 paddingTop = padTop,
                 paddingRight = padRight,
@@ -615,6 +638,7 @@ fun RouteTab(
             onSpeedChange = viewModel::setRouteSimMode,
             onCustomSpeedChange = viewModel::setCustomSpeedMs,
             onUseRealRouteChange = viewModel::setUseRealRoute,
+            onRealRouteModeChange = viewModel::setRealRouteMode,
             onStopAtDestinationChange = viewModel::setStopAtDestination,
             onEnableStepSimulationChange = viewModel::setEnableStepSimulation,
             onStepCadenceChange = viewModel::setStepCadenceSpm,

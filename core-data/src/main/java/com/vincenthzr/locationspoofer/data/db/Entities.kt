@@ -249,6 +249,19 @@ data class SavedRouteEntity(
 )
 
 /**
+ * 真实道路匹配结果缓存。键由 [com.vincenthzr.locationspoofer.data.model.RouteGeometryCacheKey]
+ * 根据途经点与路网类型生成，命中时不再调用高德 API。
+ */
+@Entity(tableName = "route_geometry_cache")
+data class RouteGeometryCacheEntity(
+    @PrimaryKey val cacheKey: String,
+    val profile: String,
+    val pointsJson: String,
+    val createdAt: Long = System.currentTimeMillis(),
+    val lastUsedAt: Long = System.currentTimeMillis()
+)
+
+/**
  * 可随数据包一起导出的软件设置（模拟参数与地图偏好）。
  * 只放"换台设备也应该保持一致"的项；
  * 运行时状态（isSpoofingActive/lastSpoofedLat/Lng）、本机偏好（语言、深色模式、忽略的版本）

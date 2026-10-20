@@ -6,11 +6,16 @@ import androidx.lifecycle.viewModelScope
 import com.vincenthzr.locationspoofer.ui.R
 import com.vincenthzr.locationspoofer.data.model.AppState
 import com.vincenthzr.locationspoofer.data.model.RoutePoint
+import com.vincenthzr.locationspoofer.data.model.RealRouteMode
+import com.vincenthzr.locationspoofer.data.model.RouteGeometryCacheKey
 import com.vincenthzr.locationspoofer.data.model.RoutePlanStage
 import com.vincenthzr.locationspoofer.data.model.RouteRunMode
+import com.vincenthzr.locationspoofer.data.model.RouteSource
 import com.vincenthzr.locationspoofer.data.model.SavedLocation
 import com.vincenthzr.locationspoofer.data.model.SimMode
 import com.vincenthzr.locationspoofer.data.state.SpoofingState
+import com.vincenthzr.locationspoofer.utils.CoordinateUtils.LatLng
+import com.vincenthzr.locationspoofer.utils.RouteSmoother
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
@@ -27,7 +32,9 @@ internal fun MainViewModel.enterRoutePlanning() {
         it.copy(
             routePlanStage = RoutePlanStage.SELECTING,
             selectedCollectionRouteId = null,
-            routePoints = emptyList()
+            routePoints = emptyList(),
+            activeRoutePoints = emptyList(),
+            routeSource = RouteSource.NONE
         )
     }
 }
@@ -35,7 +42,15 @@ internal fun MainViewModel.enterRoutePlanning() {
 /** 地图中心确认添加路点 */
 
 internal fun MainViewModel.addRoutePoint(lat: Double, lng: Double) {
-    _uiState.update { it.copy(routePoints = it.routePoints + RoutePoint(lat, lng)) }
+    _uiState.update {
+        it.copy(
+            routePoints = it.routePoints + RoutePoint(lat, lng),
+            // 手动加点即代表用户放弃了此前从路线库载入的来源，避免环境数据继续沿旧路线匹配。
+            routeSource = RouteSource.MANUAL,
+            selectedCollectionRouteId = null,
+            activeRoutePoints = emptyList()
+        )
+    }
 }
 
 /** 撤销最后一个路点 */
@@ -43,7 +58,12 @@ internal fun MainViewModel.addRoutePoint(lat: Double, lng: Double) {
 internal fun MainViewModel.undoLastRoutePoint() {
     _uiState.update { state ->
         if (state.routePoints.isEmpty()) state
-        else state.copy(routePoints = state.routePoints.dropLast(1))
+        else state.copy(
+            routePoints = state.routePoints.dropLast(1),
+            routeSource = RouteSource.MANUAL,
+            selectedCollectionRouteId = null,
+            activeRoutePoints = emptyList()
+        )
     }
 }
 
@@ -51,7 +71,12 @@ internal fun MainViewModel.undoLastRoutePoint() {
 
 internal fun MainViewModel.finishSelectingPoints() {
     if (_uiState.value.routePoints.size < 2) return
-    _uiState.update { it.copy(routePlanStage = RoutePlanStage.READY) }
+    _uiState.update {
+        it.copy(
+            routePlanStage = RoutePlanStage.READY,
+            routeSource = if (it.routeSource == RouteSource.NONE) RouteSource.MANUAL else it.routeSource
+        )
+    }
 }
 
 /** 重新选点：清空路点，回到 SELECTING */
@@ -60,8 +85,10 @@ internal fun MainViewModel.restartSelectingPoints() {
     _uiState.update {
         it.copy(
             routePoints = emptyList(),
+            activeRoutePoints = emptyList(),
             routePlanStage = RoutePlanStage.SELECTING,
-            selectedCollectionRouteId = null
+            selectedCollectionRouteId = null,
+            routeSource = RouteSource.NONE
         )
     }
 }
@@ -122,7 +149,11 @@ internal fun MainViewModel.confirmMapPoint(lat: Double, lng: Double, isDragging:
             latitudeInput = String.format("%.6f", lat),
             longitudeInput = String.format("%.6f", lng),
             mapConfirmedPoint = Pair(lat, lng),
-            showCoordinateError = false
+            showCoordinateError = false,
+            // 首页确认新坐标意味着离开此前的路线/采集路线上下文。
+            selectedCollectionRouteId = null,
+            routeSource = RouteSource.NONE,
+            activeRoutePoints = emptyList()
         )
     }
     evaluateMockCapabilities()
@@ -167,6 +198,11 @@ internal fun MainViewModel.setUseRealRoute(use: Boolean) {
     _uiState.update { it.copy(useRealRoute = use) }
 }
 
+internal fun MainViewModel.setRealRouteMode(mode: RealRouteMode) {
+    _uiState.update { it.copy(realRouteMode = mode) }
+    settingsRepository.setRealRouteMode(mode.name)
+}
+
 internal fun MainViewModel.setStopAtDestination(stop: Boolean) {
     _uiState.update { it.copy(stopAtDestination = stop) }
 }
@@ -207,83 +243,47 @@ internal fun MainViewModel.startRoutePlanning() {
         _uiState.update { it.copy(isFetchingRoute = true) }
         fetchRealRouteAndStart(state.routePoints, state)
     } else {
-        startSimulationWithPoints(state.routePoints, state)
+        startSimulationWithPoints(smoothRoutePoints(state.routePoints), state)
     }
 }
 
 private fun MainViewModel.fetchRealRouteAndStart(points: List<RoutePoint>, state: AppState) {
     viewModelScope.launch(Dispatchers.IO) {
+        val profile = resolveRealRouteProfile(state)
+        // AUTO 可能在某一段从步行退回驾车，因此缓存键要区分"自动"和用户显式选的步行，
+        // 否则下次显式选择步行会命中一条混有驾车段的缓存。
+        val cacheProfile = "${state.realRouteMode.name}:${profile.name}"
         try {
-            com.amap.api.services.core.ServiceSettings.updatePrivacyShow(context, true, true)
-            com.amap.api.services.core.ServiceSettings.updatePrivacyAgree(context, true)
-
-            val routeSearch = com.amap.api.services.route.RouteSearch(context)
-            val allRealPoints = mutableListOf<RoutePoint>()
-            var hasError = false
-
-            for (i in 0 until points.size - 1) {
-                // 从起点到终点，中间点作为途经点
-                val start = com.amap.api.services.core.LatLonPoint(points[i].lat, points[i].lng)
-                val end =
-                    com.amap.api.services.core.LatLonPoint(points[i + 1].lat, points[i + 1].lng)
-                val fromAndTo = com.amap.api.services.route.RouteSearch.FromAndTo(start, end)
-
-                // 创建驾车路线查询 (0: 速度优先，不考虑路况)
-                val query = com.amap.api.services.route.RouteSearch.DriveRouteQuery(
-                    fromAndTo,
-                    com.amap.api.services.route.RouteSearch.DrivingDefault,
-                    null,
-                    null,
-                    ""
-                )
-
-                val result = routeSearch.calculateDriveRoute(query)
-                if (result != null && result.paths.isNotEmpty()) {
-                    val path = result.paths[0]
-                    val segmentPoints = mutableListOf<RoutePoint>()
-                    val stepEndIndices = mutableListOf<Int>()
-                    for (step in path.steps) {
-                        for (polyline in step.polyline) {
-                            segmentPoints.add(
-                                RoutePoint(
-                                    polyline.latitude,
-                                    polyline.longitude,
-                                    0.0
-                                )
-                            )
-                        }
-                        if (segmentPoints.isNotEmpty()) {
-                            stepEndIndices.add(segmentPoints.size - 1)
-                        }
-                    }
-                    val trafficLights = path.totalTrafficlights
-                    if (trafficLights > 0 && stepEndIndices.isNotEmpty()) {
-                        stepEndIndices.shuffled().take(trafficLights).forEach { idx ->
-                            segmentPoints[idx] = segmentPoints[idx].copy(waitSec = 15.0)
-                        }
-                    }
-                    allRealPoints.addAll(segmentPoints)
-                } else {
-                    hasError = true
-                    break
-                }
-            }
-
-            if (!hasError && allRealPoints.isNotEmpty()) {
+            val cacheKey = RouteGeometryCacheKey.of(points, cacheProfile)
+            val cached = locationRepository.getCachedRouteGeometry(cacheKey)
+            if (cached != null) {
                 withContext(Dispatchers.Main) {
                     _uiState.update { it.copy(isFetchingRoute = false) }
-                    startSimulationWithPoints(allRealPoints, state)
-                }
-            } else {
-                withContext(Dispatchers.Main) {
-                    _uiState.update { it.copy(isFetchingRoute = false) }
+                    startSimulationWithPoints(cached, state)
                     android.widget.Toast.makeText(
                         context,
-                        context.getString(R.string.route_plan_failed_fallback_straight),
+                        context.getString(R.string.real_route_cache_hit),
                         android.widget.Toast.LENGTH_SHORT
                     ).show()
-                    startSimulationWithPoints(points, state)
                 }
+                return@launch
+            }
+
+            val realPoints = AmapRoutePlanner.fetch(
+                context = context,
+                waypoints = points,
+                profile = profile,
+                allowDriveFallback = state.realRouteMode == RealRouteMode.AUTO
+            )
+            if (realPoints.size < 2) {
+                throw IllegalStateException("AMap returned an empty route")
+            }
+            // 只有成功拿到完整道路折线才写缓存；失败时保留原来的控制点，下次仍可重试。
+            locationRepository.putCachedRouteGeometry(cacheKey, cacheProfile, realPoints)
+
+            withContext(Dispatchers.Main) {
+                _uiState.update { it.copy(isFetchingRoute = false) }
+                startSimulationWithPoints(realPoints, state)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -300,12 +300,31 @@ private fun MainViewModel.fetchRealRouteAndStart(points: List<RoutePoint>, state
                         msg = context.getString(R.string.amap_quota_exhausted_fallback_format, errMsg)
                     }
                 }
-                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG)
-                    .show()
-                startSimulationWithPoints(points, state)
+                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                startSimulationWithPoints(smoothRoutePoints(points), state)
             }
         }
     }
+}
+
+/** AUTO：步行/跑步优先步行路网，其余用驾车路网；用户显式选择时直接使用该路网。 */
+private fun MainViewModel.resolveRealRouteProfile(state: AppState): RealRouteMode {
+    return when (state.realRouteMode) {
+        RealRouteMode.WALKING -> RealRouteMode.WALKING
+        RealRouteMode.DRIVING -> RealRouteMode.DRIVING
+        RealRouteMode.AUTO -> when (state.routeSimMode) {
+            SimMode.WALKING, SimMode.RUNNING -> RealRouteMode.WALKING
+            else -> RealRouteMode.DRIVING
+        }
+    }
+}
+
+/** 非真实道路匹配时，把折线路点展开成平滑曲线；真实道路折线由高德直接给出，不再二次平滑。 */
+private fun MainViewModel.smoothRoutePoints(points: List<RoutePoint>): List<RoutePoint> {
+    if (points.size < 2) return points
+    val smoothed = RouteSmoother.smooth(points.map { LatLng(it.lat, it.lng) })
+    if (smoothed.size < 2) return points
+    return smoothed.map { RoutePoint(it.lat, it.lng) }
 }
 
 private fun MainViewModel.startSimulationWithPoints(pointsToRun: List<RoutePoint>, state: AppState) {
@@ -316,7 +335,9 @@ private fun MainViewModel.startSimulationWithPoints(pointsToRun: List<RoutePoint
             latitudeInput = String.format("%.6f", startPoint.lat),
             longitudeInput = String.format("%.6f", startPoint.lng),
             routePlanStage = RoutePlanStage.RUNNING,
-            routePoints = pointsToRun
+            // routePoints 保留用户选择的控制点（保存/重选仍然可用），实际播放路径单独存放。
+            activeRoutePoints = pointsToRun,
+            routeSource = if (it.routeSource == RouteSource.NONE) RouteSource.MANUAL else it.routeSource
         )
     }
 
@@ -375,6 +396,8 @@ internal fun MainViewModel.cancelRoutePlanning() {
         it.copy(
             routePlanStage = RoutePlanStage.IDLE,
             routePoints = emptyList(),
+            activeRoutePoints = emptyList(),
+            routeSource = RouteSource.NONE,
             routeRunMode = RouteRunMode.LOOP
         )
     }
@@ -393,6 +416,8 @@ internal fun MainViewModel.stopRoutePlanning() {
                 isSpoofingActive = false,
                 routePlanStage = RoutePlanStage.IDLE,
                 routePoints = emptyList(),
+                activeRoutePoints = emptyList(),
+                routeSource = RouteSource.NONE,
                 routeRunMode = RouteRunMode.LOOP
             )
         }
@@ -553,6 +578,13 @@ internal fun MainViewModel.loadSavedRoute(route: com.vincenthzr.locationspoofer.
     _uiState.update {
         it.copy(
             routePoints = route.points,
+            activeRoutePoints = emptyList(),
+            // 路线库载入的是另一条路线：必须断开此前采集路线/锁定点的环境匹配，
+            // 否则地图叠加层、fitBounds 和沿途 Wi-Fi/基站仍会沿用旧路线。
+            routeSource = RouteSource.SAVED,
+            selectedCollectionRouteId = null,
+            pinnedCollectedLocationId = null,
+            pinnedLocationName = null,
             routePlanStage = com.vincenthzr.locationspoofer.data.model.RoutePlanStage.READY
         )
     }
@@ -605,10 +637,12 @@ private fun MainViewModel.updatePosition(lat: Double, lng: Double, bearing: Floa
     val distance =
         2 * 6378137.0 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
 
+    val selectedCollectionRouteId = _uiState.value.selectedCollectionRouteId
+        .takeIf { _uiState.value.routeSource == RouteSource.COLLECTION }
     val coveredRouteId = com.vincenthzr.locationspoofer.data.model.CollectionRouteMatcher.routeAt(
         collectionRoutes.value,
         com.vincenthzr.locationspoofer.utils.CoordinateUtils.LatLng(lat, lng),
-        _uiState.value.selectedCollectionRouteId
+        selectedCollectionRouteId
     )?.route?.id
     // 跨越路线边界立即切换环境；沿途仍按 20 米刷新附近样本。
     if (distance > 20.0 || coveredRouteId != lastEnvironmentRouteId) {

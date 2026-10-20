@@ -3,17 +3,19 @@ package com.vincenthzr.locationspoofer.data.repository
 import android.content.Context
 import android.location.LocationManager
 import android.os.Build
+import com.vincenthzr.locationspoofer.data.db.RouteGeometryCacheDao
+import com.vincenthzr.locationspoofer.data.db.RouteGeometryCacheEntity
 import com.vincenthzr.locationspoofer.data.db.SavedRouteDao
 import com.vincenthzr.locationspoofer.data.db.SavedRouteEntity
 import com.vincenthzr.locationspoofer.data.model.RootSetupTestResult
 import com.vincenthzr.locationspoofer.data.model.RootSolution
 import com.vincenthzr.locationspoofer.data.model.RoutePoint
+import com.vincenthzr.locationspoofer.data.model.RoutePointCodec
 import com.vincenthzr.locationspoofer.data.state.SpoofingState
 import com.vincenthzr.locationspoofer.utils.ConfigManager
 import com.vincenthzr.locationspoofer.utils.LSPosedManager
 import com.vincenthzr.locationspoofer.utils.RootManager
 import com.vincenthzr.locationspoofer.utils.SettingsManager
-import org.json.JSONArray
 import org.json.JSONObject
 
 class LocationRepository(
@@ -22,6 +24,7 @@ class LocationRepository(
     private val lsposedManager: LSPosedManager,
     private val settingsManager: SettingsManager,
     private val savedRouteDao: SavedRouteDao,
+    private val routeGeometryCacheDao: RouteGeometryCacheDao,
     private val spoofingServiceController: SpoofingServiceController
 ) {
     /** 用户在设置里选择的 root 方案；解析失败（脏数据/尚未设置）时退回 AUTO */
@@ -108,7 +111,7 @@ class LocationRepository(
         SpoofingState.wifiJson = wifiJson
         SpoofingState.cellJson = cellJson
         SpoofingState.bluetoothJson = bluetoothJson
-        SpoofingState.routeJson = routePointsToJson(routePoints)
+        SpoofingState.routeJson = RoutePointCodec.encode(routePoints)
         SpoofingState.isRouteMode = isRouteMode
         SpoofingState.enableJitter = enableJitter
 
@@ -241,7 +244,7 @@ class LocationRepository(
         SpoofingState.startTimestamp = startTime
         SpoofingState.simMode = simMode
         SpoofingState.simBearing = simBearing
-        SpoofingState.routeJson = routePointsToJson(routePoints)
+        SpoofingState.routeJson = RoutePointCodec.encode(routePoints)
         SpoofingState.isRouteMode = isRouteMode
         SpoofingState.wifiJson = wifiJson
         SpoofingState.cellJson = cellJson
@@ -295,17 +298,6 @@ class LocationRepository(
         )
     }
 
-    private fun routePointsToJson(points: List<RoutePoint>): String {
-        val arr = JSONArray()
-        points.forEach { p ->
-            arr.put(JSONObject().apply {
-                put("lat", p.lat)
-                put("lng", p.lng)
-            })
-        }
-        return arr.toString()
-    }
-
     fun getSavedRoutes(): kotlinx.coroutines.flow.Flow<List<SavedRouteEntity>> {
         return savedRouteDao.getAllSavedRoutes()
     }
@@ -315,13 +307,39 @@ class LocationRepository(
     }
 
     suspend fun insertSavedRoute(name: String, points: List<RoutePoint>) {
-        val pointsJson = routePointsToJson(points)
         savedRouteDao.insertSavedRoute(
             SavedRouteEntity(
                 name = name,
-                pointsJson = pointsJson
+                pointsJson = RoutePointCodec.encode(points)
             )
         )
+    }
+
+    /** 读取真实道路匹配缓存；命中后刷新 LRU 时间。损坏或不足两个点的缓存视为未命中。 */
+    suspend fun getCachedRouteGeometry(cacheKey: String): List<RoutePoint>? {
+        val entity = routeGeometryCacheDao.get(cacheKey) ?: return null
+        val points = RoutePointCodec.decode(entity.pointsJson)
+        if (points.size < 2) {
+            return null
+        }
+        routeGeometryCacheDao.touch(cacheKey, System.currentTimeMillis())
+        return points
+    }
+
+    /** 持久化真实道路匹配结果，并按最近使用时间裁剪到 64 条。 */
+    suspend fun putCachedRouteGeometry(cacheKey: String, profile: String, points: List<RoutePoint>) {
+        if (points.size < 2) return
+        val now = System.currentTimeMillis()
+        routeGeometryCacheDao.upsert(
+            RouteGeometryCacheEntity(
+                cacheKey = cacheKey,
+                profile = profile,
+                pointsJson = RoutePointCodec.encode(points),
+                createdAt = now,
+                lastUsedAt = now
+            )
+        )
+        routeGeometryCacheDao.trim(64)
     }
 
     suspend fun insertSavedRouteEntity(route: SavedRouteEntity) {
