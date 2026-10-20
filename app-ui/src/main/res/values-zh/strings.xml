@@ -488,6 +488,7 @@
     <string name="opencellid_import">OpenCellID 导入</string>
     <string name="contains_records_format">包含 %d 条记录</string>
     <string name="lat_lng_format_prefix">经纬度:</string>
+    <string name="route_sim_start_failed">路线模拟启动失败：%s</string>
     <string name="route_plan_failed_fallback_straight">真实道路规划失败，将改用平滑模拟路线</string>
     <string name="route_request_exception">路线请求异常: %s</string>
     <string name="amap_api_exception_format">高德API异常(码:%1$d): %2$s</string>

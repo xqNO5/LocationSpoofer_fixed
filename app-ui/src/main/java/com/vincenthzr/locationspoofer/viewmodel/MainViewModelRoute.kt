@@ -15,6 +15,7 @@ import com.vincenthzr.locationspoofer.data.model.SimMode
 import com.vincenthzr.locationspoofer.data.state.SpoofingState
 import com.vincenthzr.locationspoofer.utils.CoordinateUtils.LatLng
 import com.vincenthzr.locationspoofer.utils.RouteSmoother
+import com.vincenthzr.locationspoofer.utils.RouteTurnSmoother
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
@@ -251,7 +252,7 @@ private fun MainViewModel.fetchRealRouteAndStart(points: List<RoutePoint>, state
             if (cached != null) {
                 withContext(Dispatchers.Main) {
                     _uiState.update { it.copy(isFetchingRoute = false) }
-                    startSimulationWithPoints(cached, state)
+                    startSimulationWithPoints(smoothRealRouteTurns(cached), state)
                     android.widget.Toast.makeText(
                         context,
                         context.getString(R.string.real_route_cache_hit),
@@ -270,7 +271,7 @@ private fun MainViewModel.fetchRealRouteAndStart(points: List<RoutePoint>, state
 
             withContext(Dispatchers.Main) {
                 _uiState.update { it.copy(isFetchingRoute = false) }
-                startSimulationWithPoints(realPoints, state)
+                startSimulationWithPoints(smoothRealRouteTurns(realPoints), state)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -294,7 +295,15 @@ private fun MainViewModel.fetchRealRouteAndStart(points: List<RoutePoint>, state
     }
 }
 
-/** 非真实道路匹配时，把折线路点展开成平滑曲线；真实道路折线由高德直接给出，不再二次平滑。 */
+/** 真实道路只修圆急转弯，直线段保持高德原样；缓存仍保存未平滑的原始折线。 */
+private fun MainViewModel.smoothRealRouteTurns(points: List<RoutePoint>): List<RoutePoint> {
+    if (points.size < 3) return points
+    val smoothed = RouteTurnSmoother.smooth(points.map { LatLng(it.lat, it.lng) })
+    if (smoothed.size < 2) return points
+    return smoothed.map { RoutePoint(it.lat, it.lng) }
+}
+
+/** 非真实道路匹配时，把折线路点整体展开成平滑曲线；真实道路走 [smoothRealRouteTurns]，只修急转弯。 */
 private fun MainViewModel.smoothRoutePoints(points: List<RoutePoint>): List<RoutePoint> {
     if (points.size < 2) return points
     val smoothed = RouteSmoother.smooth(points.map { LatLng(it.lat, it.lng) })
@@ -304,7 +313,15 @@ private fun MainViewModel.smoothRoutePoints(points: List<RoutePoint>): List<Rout
 
 private fun MainViewModel.startSimulationWithPoints(pointsToRun: List<RoutePoint>, state: AppState) {
     val startPoint = pointsToRun.first()
+    val isLoop = _uiState.value.routeRunMode == RouteRunMode.LOOP
+    val now = System.currentTimeMillis()
+    val speed = getEffectiveSpeedMs()
 
+    // 先点亮 UI 和持久状态，让橙色当前位置标记立刻出现；真正写配置在协程里完成。
+    // 之前把 isSpoofingActive 留到最后，startSpoofing/重启目标 App 任一步变慢都会表现为"点了开始没反应"。
+    settingsRepository.isSpoofingActive = true
+    settingsRepository.lastSpoofedLat = startPoint.lat.toString()
+    settingsRepository.lastSpoofedLng = startPoint.lng.toString()
     _uiState.update {
         it.copy(
             latitudeInput = String.format("%.6f", startPoint.lat),
@@ -312,13 +329,10 @@ private fun MainViewModel.startSimulationWithPoints(pointsToRun: List<RoutePoint
             routePlanStage = RoutePlanStage.RUNNING,
             // routePoints 保留用户选择的控制点（保存/重选仍然可用），实际播放路径单独存放。
             activeRoutePoints = pointsToRun,
-            routeSource = if (it.routeSource == RouteSource.NONE) RouteSource.MANUAL else it.routeSource
+            routeSource = if (it.routeSource == RouteSource.NONE) RouteSource.MANUAL else it.routeSource,
+            isSpoofingActive = true
         )
     }
-
-    val isLoop = _uiState.value.routeRunMode == RouteRunMode.LOOP
-    val now = System.currentTimeMillis()
-    val speed = getEffectiveSpeedMs()
 
     SpoofingState.startTimestamp = now
     SpoofingState.latitude = startPoint.lat
@@ -326,40 +340,69 @@ private fun MainViewModel.startSimulationWithPoints(pointsToRun: List<RoutePoint
     SpoofingState.simBearing = 0f
 
     viewModelScope.launch {
-        // 配置必须来自路线起点，避免将此前地图位置的环境数据带入模拟。
-        val records = environmentRecordsAt(startPoint.lat, startPoint.lng)
-        val (wifi, cell, bluetooth) = locationToJson(records, startPoint.lat, startPoint.lng)
-        _uiState.update { it.copy(collectedWifiJson = wifi, collectedCellJson = cell, collectedBluetoothJson = bluetooth) }
-        locationRepository.startSpoofing(
-            context,
-            startPoint.lat,
-            startPoint.lng,
-            if (isLoop) _uiState.value.routeSimMode.name else "STILL",
-            0f,
-            now,
-            pointsToRun,
-            isLoop,
-            _uiState.value.appCoordinateSystems,
-            _uiState.value.collectedWifiJson,
-            _uiState.value.collectedCellJson,
-            _uiState.value.collectedBluetoothJson,
-            _uiState.value.mockWifi,
-            _uiState.value.mockCell,
-            _uiState.value.mockBluetooth,
-            _uiState.value.enableJitter,
-            speedMs = speed,
-            stopAtDestination = _uiState.value.stopAtDestination,
-            enableStepSimulation = _uiState.value.enableStepSimulation,
-            stepCadenceSpm = _uiState.value.stepCadenceSpm,
-            isAutoCadence = _uiState.value.isAutoCadence
-        )
-        val preset = MotionController.SpeedPreset(_uiState.value.routeSimMode.name, joystickMaxSpeedMs().toDouble())
-        // 手动模式同样加载路线，只是以暂停状态开始、由悬浮摇杆控制，点"开始"后沿路线前进
-        motionController.onRouteStarted(pointsToRun, preset, _uiState.value.stopAtDestination, now, startPaused = !isLoop)
-        // 悬浮摇杆只在手动模式下出现；停止模拟后它会随 MotionController 结束会话自行关闭
-        if (!isLoop) locationRepository.setFloatingJoystickVisible(context, true)
-        _uiState.update {
-            it.copy(isSpoofingActive = true)
+        try {
+            // 上一会话的迟到写入先落完，再写本会话配置。
+            motionController.awaitWritesDrained()
+
+            // 配置必须来自路线起点，避免将此前地图位置的环境数据带入模拟。
+            val records = environmentRecordsAt(startPoint.lat, startPoint.lng)
+            val (wifi, cell, bluetooth) = locationToJson(records, startPoint.lat, startPoint.lng)
+            _uiState.update { it.copy(collectedWifiJson = wifi, collectedCellJson = cell, collectedBluetoothJson = bluetooth) }
+
+            val current = _uiState.value
+            locationRepository.startSpoofing(
+                context,
+                startPoint.lat,
+                startPoint.lng,
+                if (isLoop) current.routeSimMode.name else "STILL",
+                0f,
+                now,
+                pointsToRun,
+                isLoop,
+                current.appCoordinateSystems,
+                wifi,
+                cell,
+                bluetooth,
+                current.mockWifi,
+                current.mockCell,
+                current.mockBluetooth,
+                current.enableJitter,
+                speedMs = speed,
+                stopAtDestination = current.stopAtDestination,
+                enableStepSimulation = current.enableStepSimulation,
+                stepCadenceSpm = current.stepCadenceSpm,
+                isAutoCadence = current.isAutoCadence
+            )
+
+            val preset = MotionController.SpeedPreset(current.routeSimMode.name, joystickMaxSpeedMs().toDouble())
+            // 手动模式同样加载路线，只是以暂停状态开始、由悬浮摇杆控制，点"开始"后沿路线前进
+            motionController.onRouteStarted(pointsToRun, preset, current.stopAtDestination, now, startPaused = !isLoop)
+            // 悬浮摇杆只在手动模式下出现；停止模拟后它会随 MotionController 结束会话自行关闭
+            if (!isLoop) locationRepository.setFloatingJoystickVisible(context, true)
+
+            // 目标 App 已经在运行且未重新加载模块时，配置推送不一定会被旧进程接收。
+            // 和定点模拟保持一致：按用户设置重启已勾选的作用域应用。
+            if (current.restartAppsOnSpoof) {
+                kotlinx.coroutines.delay(200)
+                runCatching { restartHookedAppsSilently() }
+            }
+        } catch (error: Exception) {
+            error.printStackTrace()
+            settingsRepository.isSpoofingActive = false
+            runCatching { motionController.onStopped() }
+            runCatching { locationRepository.stopSpoofing(context) }
+            _uiState.update {
+                it.copy(
+                    isSpoofingActive = false,
+                    routePlanStage = RoutePlanStage.READY,
+                    activeRoutePoints = emptyList()
+                )
+            }
+            android.widget.Toast.makeText(
+                context,
+                context.getString(R.string.route_sim_start_failed, error.message ?: ""),
+                android.widget.Toast.LENGTH_LONG
+            ).show()
         }
     }
 }
@@ -385,6 +428,8 @@ internal fun MainViewModel.stopRoutePlanning() {
     motionController.onStopped()
     environmentUpdateJob?.cancel()
     viewModelScope.launch {
+        // 先让正在执行的旧路线写入结束，再写 inactive，避免停止后又被迟到写入重新激活。
+        motionController.awaitWritesDrained()
         locationRepository.stopSpoofing(context)
         _uiState.update {
             it.copy(

@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -121,13 +123,18 @@ class MotionController(
     @Volatile private var pendingWrite: (suspend () -> Unit)? = null
     private val writeSignal = Channel<Unit>(Channel.CONFLATED)
 
+    // 会话代次：stop 之后，已经排队的旧路线写入必须作废，不能在 UI 已经复位后又把 active 配置写回去。
+    @Volatile private var sessionGeneration = 0L
+    // stop 时等待正在执行的写入结束，再写 inactive，避免"结束后反而生效"。
+    private val writeExecutionMutex = Mutex()
+
     init {
         scope.launch {
             for (ignored in writeSignal) {
                 val job = pendingWrite ?: continue
                 pendingWrite = null
                 try {
-                    job()
+                    writeExecutionMutex.withLock { job() }
                 } catch (_: Exception) {
                 }
             }
@@ -137,6 +144,7 @@ class MotionController(
     // ================================================================ 会话生命周期（由界面在开始 / 停止模拟时调用）
 
     fun onStaticStarted(lat: Double, lng: Double) {
+        sessionGeneration++
         clearRoute()
         joyIntensity = 0f
         _state.update { it.copy(mode = Mode.STATIC, lat = lat, lng = lng, speedMs = 0.0, hasRoute = false, paused = false, returning = false) }
@@ -154,6 +162,7 @@ class MotionController(
         startTimestamp: Long,
         startPaused: Boolean = false
     ) {
+        sessionGeneration++
         val routePath = RoutePath(points.map { LatLng(it.lat, it.lng) })
         if (!routePath.isValid) return
         path = routePath
@@ -184,6 +193,7 @@ class MotionController(
     }
 
     fun onStopped() {
+        sessionGeneration++
         clearRoute()
         joyIntensity = 0f
         pendingWrite = null
@@ -194,6 +204,11 @@ class MotionController(
     }
 
     /** 进程重启后界面状态丢失但模拟仍在进行时，按 SpoofingState 恢复成定点模拟 */
+    /** 停止后等待正在执行的配置写入完成；调用方随后再写 inactive 配置。 */
+    suspend fun awaitWritesDrained() {
+        writeExecutionMutex.withLock { }
+    }
+
     fun syncFromSpoofingStateIfIdle() {
         if (_state.value.mode == Mode.IDLE && SpoofingState.isActive) {
             onStaticStarted(SpoofingState.latitude, SpoofingState.longitude)
@@ -407,7 +422,11 @@ class MotionController(
     }
 
     private fun enqueueWrite(block: suspend () -> Unit) {
-        pendingWrite = block
+        val generation = sessionGeneration
+        pendingWrite = {
+            // 排队期间如果用户已经停止/切换会话，旧写入直接丢弃。
+            if (generation == sessionGeneration) block()
+        }
         writeSignal.trySend(Unit)
     }
 

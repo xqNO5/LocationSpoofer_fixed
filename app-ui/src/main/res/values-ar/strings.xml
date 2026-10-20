@@ -353,6 +353,7 @@
     <string name="opencellid_import">استيراد OpenCellID</string>
     <string name="contains_records_format">يحتوي على %d من السجلات</string>
     <string name="lat_lng_format_prefix">الإحداثيات:</string>
+    <string name="route_sim_start_failed">فشل بدء محاكاة المسار: %s</string>
     <string name="route_plan_failed_fallback_straight">فشل تخطيط المسار، جاري الرجوع إلى مسار محاكاة سلس</string>
     <string name="route_request_exception">خطأ في طلب المسار: %s</string>
     <string name="amap_api_exception_format">خطأ في واجهة برمجة AMap (الرمز: %1$d): %2$s</string>
