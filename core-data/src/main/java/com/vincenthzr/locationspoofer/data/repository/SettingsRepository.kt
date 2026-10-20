@@ -74,12 +74,6 @@ class SettingsRepository(private val settingsManager: SettingsManager) {
         settingsManager.mapEngine = value
     }
 
-    fun getRealRouteMode(): String = settingsManager.realRouteMode
-
-    fun setRealRouteMode(value: String) {
-        settingsManager.realRouteMode = value
-    }
-
     fun getRootSolution(): String = settingsManager.rootSolution
 
     fun setRootSolution(value: String) {

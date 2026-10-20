@@ -10,7 +10,6 @@ import com.vincenthzr.locationspoofer.data.model.AppState
 import com.vincenthzr.locationspoofer.data.model.AppMapType
 import com.vincenthzr.locationspoofer.data.model.MapEngine
 import com.vincenthzr.locationspoofer.data.model.RootSolution
-import com.vincenthzr.locationspoofer.data.model.RealRouteMode
 import com.vincenthzr.locationspoofer.vendor.VendorScheme
 import com.vincenthzr.locationspoofer.utils.GaitTemplate
 import com.vincenthzr.locationspoofer.data.motion.MotionController
@@ -72,11 +71,6 @@ class MainViewModel(
                 MapEngine.valueOf(settingsRepository.getMapEngine())
             } catch (e: Exception) {
                 MapEngine.AUTO
-            },
-            realRouteMode = try {
-                RealRouteMode.valueOf(settingsRepository.getRealRouteMode())
-            } catch (e: Exception) {
-                RealRouteMode.AUTO
             },
             rootSolution = try {
                 RootSolution.valueOf(settingsRepository.getRootSolution())

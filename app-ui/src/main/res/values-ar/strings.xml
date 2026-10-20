@@ -230,13 +230,6 @@
     <string name="stop_at_destination_desc_off">حلقة تلقائية عند الوصول (للأمام للمسار المغلق، وعكسي للمفتوح)</string>
     <string name="real_road_matching">مطابقة الطرق الحقيقية</string>
     <string name="real_road_matching_desc">محاذاة مسار القيادة الفعلي في المدينة تلقائيًا</string>
-    <string name="real_route_mode_title">نوع شبكة الطرق</string>
-    <string name="real_route_mode_auto">تلقائي</string>
-    <string name="real_route_mode_walking">مشي</string>
-    <string name="real_route_mode_driving">قيادة</string>
-    <string name="real_route_mode_auto_desc">تلقائي: شبكة المشي للمشي/الجري، وشبكة القيادة لغير ذلك</string>
-    <string name="real_route_mode_walking_desc">شبكة المشي: أفضل للممرات والطرق الداخلية؛ لا تدعم نقاط المرور وقد تفشل المسارات الطويلة</string>
-    <string name="real_route_mode_driving_desc">شبكة القيادة: حتى 6 نقاط مرور في الطلب الواحد، وتُقسّم تلقائيًا عند الزيادة</string>
     <string name="real_route_cache_hit">تم استخدام مسار الطريق المخزن محليًا</string>
     <string name="start_route_simulation">بدء محاكاة المسار</string>
     <string name="software_update">تحديث البرنامج</string>

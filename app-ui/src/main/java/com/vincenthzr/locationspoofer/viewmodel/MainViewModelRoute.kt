@@ -6,7 +6,6 @@ import androidx.lifecycle.viewModelScope
 import com.vincenthzr.locationspoofer.ui.R
 import com.vincenthzr.locationspoofer.data.model.AppState
 import com.vincenthzr.locationspoofer.data.model.RoutePoint
-import com.vincenthzr.locationspoofer.data.model.RealRouteMode
 import com.vincenthzr.locationspoofer.data.model.RouteGeometryCacheKey
 import com.vincenthzr.locationspoofer.data.model.RoutePlanStage
 import com.vincenthzr.locationspoofer.data.model.RouteRunMode
@@ -198,11 +197,6 @@ internal fun MainViewModel.setUseRealRoute(use: Boolean) {
     _uiState.update { it.copy(useRealRoute = use) }
 }
 
-internal fun MainViewModel.setRealRouteMode(mode: RealRouteMode) {
-    _uiState.update { it.copy(realRouteMode = mode) }
-    settingsRepository.setRealRouteMode(mode.name)
-}
-
 internal fun MainViewModel.setStopAtDestination(stop: Boolean) {
     _uiState.update { it.copy(stopAtDestination = stop) }
 }
@@ -249,10 +243,8 @@ internal fun MainViewModel.startRoutePlanning() {
 
 private fun MainViewModel.fetchRealRouteAndStart(points: List<RoutePoint>, state: AppState) {
     viewModelScope.launch(Dispatchers.IO) {
-        val profile = resolveRealRouteProfile(state)
-        // AUTO 可能在某一段从步行退回驾车，因此缓存键要区分"自动"和用户显式选的步行，
-        // 否则下次显式选择步行会命中一条混有驾车段的缓存。
-        val cacheProfile = "${state.realRouteMode.name}:${profile.name}"
+        // 真实道路统一使用驾车 API；缓存键固定按 DRIVING 区分，避免旧版本步行缓存被误用。
+        val cacheProfile = "DRIVING"
         try {
             val cacheKey = RouteGeometryCacheKey.of(points, cacheProfile)
             val cached = locationRepository.getCachedRouteGeometry(cacheKey)
@@ -269,12 +261,7 @@ private fun MainViewModel.fetchRealRouteAndStart(points: List<RoutePoint>, state
                 return@launch
             }
 
-            val realPoints = AmapRoutePlanner.fetch(
-                context = context,
-                waypoints = points,
-                profile = profile,
-                allowDriveFallback = state.realRouteMode == RealRouteMode.AUTO
-            )
+            val realPoints = AmapRoutePlanner.fetch(context, points)
             if (realPoints.size < 2) {
                 throw IllegalStateException("AMap returned an empty route")
             }
@@ -303,18 +290,6 @@ private fun MainViewModel.fetchRealRouteAndStart(points: List<RoutePoint>, state
                 android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
                 startSimulationWithPoints(smoothRoutePoints(points), state)
             }
-        }
-    }
-}
-
-/** AUTO：步行/跑步优先步行路网，其余用驾车路网；用户显式选择时直接使用该路网。 */
-private fun MainViewModel.resolveRealRouteProfile(state: AppState): RealRouteMode {
-    return when (state.realRouteMode) {
-        RealRouteMode.WALKING -> RealRouteMode.WALKING
-        RealRouteMode.DRIVING -> RealRouteMode.DRIVING
-        RealRouteMode.AUTO -> when (state.routeSimMode) {
-            SimMode.WALKING, SimMode.RUNNING -> RealRouteMode.WALKING
-            else -> RealRouteMode.DRIVING
         }
     }
 }

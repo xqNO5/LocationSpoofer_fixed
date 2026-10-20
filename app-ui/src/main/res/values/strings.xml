@@ -366,13 +366,6 @@
     <string name="stop_at_destination_desc_off">Auto loop upon arrival (forward for closed loop, return for open route)</string>
     <string name="real_road_matching">Real Road Matching</string>
     <string name="real_road_matching_desc">Snap to actual city driving roads automatically</string>
-    <string name="real_route_mode_title">Road network</string>
-    <string name="real_route_mode_auto">Auto</string>
-    <string name="real_route_mode_walking">Walking</string>
-    <string name="real_route_mode_driving">Driving</string>
-    <string name="real_route_mode_auto_desc">Auto: walking network for walking/running, driving network otherwise</string>
-    <string name="real_route_mode_walking_desc">Walking network: better for alleys and internal roads; no via points, long routes may fail</string>
-    <string name="real_route_mode_driving_desc">Driving network: up to 6 via points per request, automatically batched when there are more</string>
     <string name="real_route_cache_hit">Using the cached road route</string>
     <string name="start_route_simulation">Start Route Simulation</string>
     <string name="software_update">Software Update</string>

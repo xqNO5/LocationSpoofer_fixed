@@ -127,8 +127,6 @@ data class AppState(
     val isAutoCadence: Boolean = true,
     /** 是否使用真实路线规划 */
     val useRealRoute: Boolean = false,
-    /** 真实道路匹配使用的路网类型 */
-    val realRouteMode: RealRouteMode = RealRouteMode.AUTO,
     /** 到达终点后是否停下 */
     val stopAtDestination: Boolean = false,
     /** 是否正在向地图API请求真实路线 */
